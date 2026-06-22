@@ -23,6 +23,14 @@ interface Spike {
   percent: number;
 }
 
+interface DayComparison {
+  yesterday: number;
+  today: number;
+  change: number;
+  percent: number;
+  direction: 'up' | 'down';
+}
+
 
 const serviceIcons: Record<string, string> = {
   'EC2': '💻',
@@ -47,15 +55,96 @@ function getServiceIcon(serviceName: string): string {
   return '📦';
 }
 
+type SortKey = 'name' | 'itOwner' | 'application' | 'cost';
+type SortDirection = 'asc' | 'desc';
+
 export default function Home() {
   const [services, setServices] = useState<Service[]>([]);
   const [days, setDays] = useState(30);
   const [isLoading, setIsLoading] = useState(true);
   const [isRealData, setIsRealData] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>('cost');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [dayComparison, setDayComparison] = useState<DayComparison | null>(null);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortValue = (svc: Service, key: SortKey): string | number => {
+    switch (key) {
+      case 'name':
+        return svc.name.toLowerCase();
+      case 'itOwner':
+        return (svc.tags.itOwner || '').toLowerCase();
+      case 'application':
+        return (svc.tags.application || '').toLowerCase();
+      case 'cost':
+        return svc.cost;
+    }
+  };
+
+  const sortedServices = [...services].sort((a, b) => {
+    const aVal = getSortValue(a, sortKey);
+    const bVal = getSortValue(b, sortKey);
+    let comparison = 0;
+    if (aVal < bVal) comparison = -1;
+    else if (aVal > bVal) comparison = 1;
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
+  const SortIndicator = ({ column }: { column: SortKey }) => {
+    if (sortKey !== column) return <span className="ml-1 text-muted-foreground/40">↕</span>;
+    return <span className="ml-1 text-foreground">{sortDirection === 'asc' ? '↑' : '↓'}</span>;
+  };
 
   useEffect(() => {
     fetchData();
   }, [days]);
+
+  useEffect(() => {
+    fetchDayComparison();
+  }, []);
+
+  const fetchDayComparison = async () => {
+    try {
+      const response = await fetch(`http://localhost:3001/api/spikes`);
+      const data = await response.json();
+
+      if (data.spikes && Array.isArray(data.spikes) && data.spikes.length > 0) {
+        const yesterdayTotal = data.spikes.reduce((sum: number, s: Spike) => sum + s.yesterday, 0);
+        const todayTotal = data.spikes.reduce((sum: number, s: Spike) => sum + s.today, 0);
+        const change = todayTotal - yesterdayTotal;
+        const percent = yesterdayTotal > 0 ? (change / yesterdayTotal) * 100 : 0;
+        setDayComparison({
+          yesterday: yesterdayTotal,
+          today: todayTotal,
+          change,
+          percent,
+          direction: change >= 0 ? 'up' : 'down',
+        });
+      } else {
+        setDayComparison(mockDayComparison);
+      }
+    } catch (error) {
+      console.error('Failed to fetch day comparison:', error);
+      setDayComparison(mockDayComparison);
+    }
+  };
+
+  const mockDayComparison: DayComparison = {
+    yesterday: 612.34,
+    today: 678.91,
+    change: 66.57,
+    percent: 10.87,
+    direction: 'up',
+  };
+
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -102,6 +191,21 @@ export default function Home() {
     cost: s.cost,
     rank: i + 1,
   }));
+
+  const aggregateByTag = (key: 'itOwner' | 'application') => {
+    const totals = new Map<string, number>();
+    services.forEach((s) => {
+      const tagValue = s.tags[key] || 'Unassigned';
+      totals.set(tagValue, (totals.get(tagValue) || 0) + s.cost);
+    });
+    return Array.from(totals.entries())
+      .map(([name, cost]) => ({ name, cost }))
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 5);
+  };
+
+  const topOwners = aggregateByTag('itOwner');
+  const topApplications = aggregateByTag('application');
 
   const spikes: Spike[] = services.slice(0, 3).map((s) => ({
     service: s.name,
@@ -178,6 +282,88 @@ export default function Home() {
           ))}
         </div>
 
+        {/* Tag-based Spenders & Day Comparison */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          {/* Top Spenders by Owner & Application */}
+          <div className="bg-gradient-to-br from-card/50 to-card/30 border border-border/50 rounded-xl p-8 backdrop-blur-sm">
+            <h2 className="text-2xl font-bold text-foreground mb-6">🏷️ Top Spenders by Tag</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div>
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">By IT Owner</h3>
+                <div className="space-y-2">
+                  {topOwners.map((owner, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-3 border border-border/50 rounded-lg bg-gradient-to-r from-purple-500/10 to-transparent hover:border-accent/50 transition-all"
+                    >
+                      <span className="text-sm font-medium text-foreground truncate">{owner.name}</span>
+                      <span className="font-bold text-sm bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent whitespace-nowrap ml-2">
+                        ${owner.cost.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">By Application</h3>
+                <div className="space-y-2">
+                  {topApplications.map((app, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-3 border border-border/50 rounded-lg bg-gradient-to-r from-cyan-500/10 to-transparent hover:border-accent/50 transition-all"
+                    >
+                      <span className="text-sm font-medium text-foreground truncate">{app.name}</span>
+                      <span className="font-bold text-sm bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent whitespace-nowrap ml-2">
+                        ${app.cost.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Last Two Days Comparison */}
+          <div className="bg-gradient-to-br from-card/50 to-card/30 border border-border/50 rounded-xl p-8 backdrop-blur-sm">
+            <h2 className="text-2xl font-bold text-foreground mb-6">📆 Last Two Days</h2>
+            {dayComparison && (
+              <div>
+                <div className="flex items-center justify-between gap-6 mb-6">
+                  <div className="flex-1 p-4 border border-border/50 rounded-lg bg-gradient-to-br from-slate-500/10 to-transparent">
+                    <p className="text-xs text-muted-foreground uppercase mb-1">Yesterday</p>
+                    <p className="text-2xl font-bold text-foreground">${dayComparison.yesterday.toFixed(2)}</p>
+                  </div>
+                  <span className="text-2xl text-muted-foreground">→</span>
+                  <div className="flex-1 p-4 border border-border/50 rounded-lg bg-gradient-to-br from-purple-500/10 to-transparent">
+                    <p className="text-xs text-muted-foreground uppercase mb-1">Today</p>
+                    <p className="text-2xl font-bold text-foreground">${dayComparison.today.toFixed(2)}</p>
+                  </div>
+                </div>
+                <div
+                  className={`p-4 border rounded-lg flex items-center justify-between ${
+                    dayComparison.direction === 'up'
+                      ? 'border-red-500/30 bg-gradient-to-r from-red-500/10 to-transparent'
+                      : 'border-green-500/30 bg-gradient-to-r from-green-500/10 to-transparent'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{dayComparison.direction === 'up' ? '📈' : '📉'}</span>
+                    <span className="text-sm text-muted-foreground">
+                      {dayComparison.direction === 'up' ? 'Increase' : 'Decrease'} vs. yesterday
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <p className={`font-bold ${dayComparison.direction === 'up' ? 'text-red-400' : 'text-green-400'}`}>
+                      {dayComparison.direction === 'up' ? '↑' : '↓'} {Math.abs(dayComparison.percent).toFixed(1)}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">${Math.abs(dayComparison.change).toFixed(2)}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
           {/* Top Spenders */}
@@ -246,14 +432,30 @@ export default function Home() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border/50">
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-muted-foreground uppercase">Service</th>
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-muted-foreground uppercase">Owner</th>
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-muted-foreground uppercase">Application</th>
-                  <th className="text-right py-3 px-4 text-xs font-semibold text-muted-foreground uppercase">Cost</th>
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-muted-foreground uppercase">
+                    <button onClick={() => handleSort('name')} className="flex items-center hover:text-foreground transition-colors">
+                      Service<SortIndicator column="name" />
+                    </button>
+                  </th>
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-muted-foreground uppercase">
+                    <button onClick={() => handleSort('itOwner')} className="flex items-center hover:text-foreground transition-colors">
+                      Owner<SortIndicator column="itOwner" />
+                    </button>
+                  </th>
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-muted-foreground uppercase">
+                    <button onClick={() => handleSort('application')} className="flex items-center hover:text-foreground transition-colors">
+                      Application<SortIndicator column="application" />
+                    </button>
+                  </th>
+                  <th className="text-right py-3 px-4 text-xs font-semibold text-muted-foreground uppercase">
+                    <button onClick={() => handleSort('cost')} className="flex items-center justify-end w-full hover:text-foreground transition-colors">
+                      Cost<SortIndicator column="cost" />
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {services.map((svc, idx) => (
+                {sortedServices.map((svc, idx) => (
                   <tr
                     key={idx}
                     className="border-b border-border/30 hover:bg-purple-500/10 transition-all group"
