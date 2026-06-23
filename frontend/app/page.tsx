@@ -6,12 +6,7 @@ interface Service {
   name: string;
   cost: number;
   icon?: string;
-  tags: {
-    itOwner: string;
-    application: string;
-    environment?: string;
-    costCenter?: string;
-  };
+  tags: Record<string, string>;
 }
 
 interface Spike {
@@ -113,7 +108,8 @@ export default function Home() {
   }));
 
   const topOwners = services.reduce((acc: Record<string, number>, s) => {
-    acc[s.tags.itOwner] = (acc[s.tags.itOwner] || 0) + s.cost;
+    const owner = s.tags['IT-Owner'] || s.tags.itOwner || 'Unassigned';
+    acc[owner] = (acc[owner] || 0) + s.cost;
     return acc;
   }, {});
 
@@ -128,7 +124,8 @@ export default function Home() {
     }));
 
   const topApplications = services.reduce((acc: Record<string, number>, s) => {
-    acc[s.tags.application] = (acc[s.tags.application] || 0) + s.cost;
+    const app = s.tags.Application || s.tags.application || 'Unassigned';
+    acc[app] = (acc[app] || 0) + s.cost;
     return acc;
   }, {});
 
@@ -353,8 +350,8 @@ export default function Home() {
                         <span className="font-medium text-foreground">{svc.name}</span>
                       </div>
                     </td>
-                    <td className="py-4 px-4 text-sm text-muted-foreground">{svc.tags.itOwner}</td>
-                    <td className="py-4 px-4 text-sm text-muted-foreground">{svc.tags.application}</td>
+                    <td className="py-4 px-4 text-sm text-muted-foreground">{svc.tags['IT-Owner'] || svc.tags.itOwner || 'N/A'}</td>
+                    <td className="py-4 px-4 text-sm text-muted-foreground">{svc.tags.Application || svc.tags.application || 'N/A'}</td>
                     <td className="py-4 px-4 text-right">
                       <span className="font-bold text-sm bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
                         ${svc.cost.toFixed(2)}
